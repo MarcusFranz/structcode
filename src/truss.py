@@ -27,7 +27,6 @@ class TrussStructure:
         self.k_element = None
         self.import_data(directory)
         self.create_global_connector()
-        self.create_k_element_2d()
         self.create_k_element_2d_multi()
 
     def __str__(self):
@@ -91,25 +90,17 @@ class TrussStructure:
 
         self.global_connector = global_connector
 
-    def create_k_element_2d(self):
-        k_elements = np.empty((4, 4, 0))
-        for row in self.elements.itertuples():
-            E = row[4]
-            A = row[5]
-            node_1_pos = self.nodes.loc[self.nodes['Node'] == row[2], ('X', 'Y')]
-            node_2_pos = self.nodes.loc[self.nodes['Node'] == row[3], ('X', 'Y')]
-            dx = node_2_pos['X'].item() - node_1_pos['X'].item()
-            dy = node_2_pos['Y'].item() - node_1_pos['Y'].item()
-            c2 = dx ** 2 / (dx ** 2 + dy ** 2)
-            s2 = dy ** 2 / (dx ** 2 + dy ** 2)
-            cs = (dy * dx) / (dx ** 2 + dy ** 2)
-            k_elements_iter = np.array(
-                [[c2, cs, -c2, -cs],
-                 [cs, s2, -cs, -s2],
-                 [-c2, -cs, c2, cs],
-                 [-cs, -s2, cs, s2]]) * (E * A) / np.linalg.norm([dx, dy])
-            k_elements = np.append(k_elements, np.expand_dims(k_elements_iter, axis=2), axis=2)
-        self.k_element = k_elements
+    def create_global_connector_fast(self):
+        self.displacements.sort_values(by=['Node', 'DOF'], inplace=True)
+        global_connector = np.arange(self.n_nodes * self.n_dimensions).reshape((self.n_nodes, self.n_dimensions))
+        print(global_connector)
+        for row_of_displacements in self.displacements.itertuples():
+            dof_num = global_connector[row_of_displacements[1] - 1, row_of_displacements[2] - 1]
+            mask = global_connector > dof_num
+            global_connector[mask] -= 1
+            global_connector[
+                row_of_displacements[1] - 1, row_of_displacements[2] - 1] = self.n_nodes * self.n_dimensions - 1
+        return global_connector
 
     def create_k_element_2d_multi(self):
         def process_row(row):
