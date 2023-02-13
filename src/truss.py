@@ -26,7 +26,7 @@ class TrussStructure:
         self.global_connector = None
         self.k_element = None
         self.import_data(directory)
-        self.create_global_connector()
+        self.create_global_connector_fast()
         self.create_k_element_2d_multi()
 
     def __str__(self):
@@ -72,25 +72,10 @@ class TrussStructure:
         self.n_forces = self.forces.shape[0]
         self.n_displacements = self.displacements.shape[0]
 
-    def create_global_connector(self):
-        """
-        Creates the global connector, note this is using 0 as starting index.
-        """
-        global_connector = np.arange(self.n_nodes * self.n_dimensions).reshape((self.n_nodes, self.n_dimensions))
-
-        for i in range(0, self.n_displacements):
-            dof_num = global_connector[self.displacements['Node'][i] - 1, self.displacements['DOF'][i] - 1]
-            for j in range(0, self.n_nodes):
-                for k in range(0, self.n_dimensions):
-                    if global_connector[j, k] > dof_num:
-                        global_connector[j, k] -= 1
-            global_connector[
-                self.displacements['Node'][i] - 1, self.displacements['DOF'][
-                    i] - 1] = self.n_nodes * self.n_dimensions - 1
-
-        self.global_connector = global_connector
-
     def create_global_connector_fast(self):
+        """
+        Creates the global connector array, using a 0 index system.
+        """
         self.displacements.sort_values(by=['Node', 'DOF'], inplace=True)
         global_connector = np.arange(self.n_nodes * self.n_dimensions).reshape((self.n_nodes, self.n_dimensions))
         print(global_connector)
@@ -100,7 +85,7 @@ class TrussStructure:
             global_connector[mask] -= 1
             global_connector[
                 row_of_displacements[1] - 1, row_of_displacements[2] - 1] = self.n_nodes * self.n_dimensions - 1
-        return global_connector
+        self.global_connector = global_connector
 
     def create_k_element_2d_multi(self):
         def process_row(row):
