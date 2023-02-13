@@ -5,7 +5,7 @@ import pandas as pd
 
 
 class TrussStructure:
-    def __init__(self, analysis_name: str, directory: str) -> object:
+    def __init__(self, analysis_name: str, directory: str):
         """
         Creates new object in the class TrussStructure. Contains all the truss data and methods.
 
@@ -25,6 +25,7 @@ class TrussStructure:
         self.n_dimensions = None
         self.global_connector = None
         self.k_element = None
+        self.n_dof = None
         self.import_data(directory)
         self.create_global_connector_fast()
         self.create_k_element_2d_multi()
@@ -76,9 +77,9 @@ class TrussStructure:
         """
         Creates the global connector array, using a 0 index system.
         """
+        self.n_dof = self.n_dimensions * self.n_nodes - self.n_displacements
         self.displacements.sort_values(by=['Node', 'DOF'], inplace=True)
         global_connector = np.arange(self.n_nodes * self.n_dimensions).reshape((self.n_nodes, self.n_dimensions))
-        print(global_connector)
         for row_of_displacements in self.displacements.itertuples():
             dof_num = global_connector[row_of_displacements[1] - 1, row_of_displacements[2] - 1]
             mask = global_connector > dof_num
@@ -113,11 +114,37 @@ class TrussStructure:
 
         self.k_element = k_elements
 
-    # def create_k_global_2d(self):
-    #     u = np.zeros((self.n_nodes, self.n_dimensions), dtype=float)
-    #     for i in range(0, self.n_dimensions):
-    #         u[self.displacements.loc[i, 'Node']-1, self.displacements.loc[i, 'DOF']-1] = self.displacements.loc[i, 'Value']
-    #
-    #     for local_node_1 in self.nodes[Node]
-    #
-    #     return "done"
+    def create_k_global_2d(self):
+        u = np.zeros((self.n_nodes, self.n_dimensions), dtype=float)
+        for i in range(0, self.n_dimensions):
+            u[self.displacements.loc[i, 'Node'] - 1, self.displacements.loc[i, 'DOF'] - 1] = self.displacements.loc[
+                i, 'Value']
+        forces_global = np.zeros((self.n_nodes * self.n_dimensions))
+        for i in range(self.n_forces):
+            node = self.forces['Node'][i]
+            dof = self.forces['DOF'][i]
+            g_dof = self.global_connector[node - 1, dof - 1]
+            forces_global[g_dof] = forces_global[g_dof] + self.forces['Value'][i]
+
+        k_global = np.zeros((self.n_nodes * self.n_dimensions, self.n_nodes * self.n_dimensions))
+        for element in range(self.elements.shape[-1]):
+            for local_node_1 in range(2):
+                for local_xy_1 in range(self.n_dimensions):
+                    local_dof_1 = self.n_dimensions * local_node_1 + local_xy_1
+                    global_node_1 = int(self.elements.to_numpy()[element, local_node_1 + 1] - 1)
+                    global_dof_1 = self.global_connector[global_node_1, local_xy_1]
+                    # if global_dof_1 > self.n_dof - 1:
+                    for local_node_2 in range(2):
+                        for local_xy_2 in range(self.n_dimensions):
+                            local_dof_2 = self.n_dimensions * local_node_2 + local_xy_2
+                            global_node_2 = int(self.elements.to_numpy()[element, local_node_2 + 1] - 1)
+                            global_dof_2 = self.global_connector[global_node_2, local_xy_2]
+                            # if global_dof_2 > self.n_dof - 1:
+                           # forces_global[global_dof_1] = forces_global[global_dof_1] - self.k_element[
+                             #   local_dof_1, local_dof_2, element] * u[global_node_2, local_xy_2]
+                        # else:
+                            k_global[global_dof_1, global_dof_2] = k_global[global_dof_1, global_dof_2] + \
+                                                                   self.k_element[
+                                                                       local_dof_1, local_dof_2, element]
+
+        return "done"
