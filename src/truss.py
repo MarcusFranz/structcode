@@ -28,7 +28,7 @@ class TrussStructure:
         self.n_dof = None
         self.import_data(directory)
         self.create_global_connector_fast()
-        self.create_k_element_2d_multi()
+        self.create_k_element_2d()
 
     def __str__(self):
         return f"{self.name} analysis, created on {self.date_created}"
@@ -88,6 +88,26 @@ class TrussStructure:
                 row_of_displacements[1] - 1, row_of_displacements[2] - 1] = self.n_nodes * self.n_dimensions - 1
         self.global_connector = global_connector
 
+    def create_k_element_2d(self):
+        k_elements = np.empty((4, 4, 0))
+        for row in self.elements.itertuples():
+            E = row[4]
+            A = row[5]
+            node_1_pos = self.nodes.loc[self.nodes['Node'] == row[2], ('X', 'Y')]
+            node_2_pos = self.nodes.loc[self.nodes['Node'] == row[3], ('X', 'Y')]
+            dx = node_2_pos['X'].item() - node_1_pos['X'].item()
+            dy = node_2_pos['Y'].item() - node_1_pos['Y'].item()
+            c2 = dx ** 2 / (dx ** 2 + dy ** 2)
+            s2 = dy ** 2 / (dx ** 2 + dy ** 2)
+            cs = (dy * dx) / (dx ** 2 + dy ** 2)
+            k_elements_iter = np.array(
+                [[c2, cs, -c2, -cs],
+                 [cs, s2, -cs, -s2],
+                 [-c2, -cs, c2, cs],
+                 [-cs, -s2, cs, s2]]) * (E * A) / np.linalg.norm([dx, dy])
+            k_elements = np.append(k_elements, np.expand_dims(k_elements_iter, axis=2), axis=2)
+        self.k_element = k_elements
+
     def create_k_element_2d_multi(self):
         def process_row(row):
             E = row[4]
@@ -127,24 +147,28 @@ class TrussStructure:
             forces_global[g_dof] = forces_global[g_dof] + self.forces['Value'][i]
 
         k_global = np.zeros((self.n_nodes * self.n_dimensions, self.n_nodes * self.n_dimensions))
-        for element in range(self.elements.shape[-1]):
+        for element in range(self.n_elements):
             for local_node_1 in range(2):
                 for local_xy_1 in range(self.n_dimensions):
                     local_dof_1 = self.n_dimensions * local_node_1 + local_xy_1
                     global_node_1 = int(self.elements.to_numpy()[element, local_node_1 + 1] - 1)
                     global_dof_1 = self.global_connector[global_node_1, local_xy_1]
-                    # if global_dof_1 > self.n_dof - 1:
+                    if global_dof_1 > self.n_dof - 1:
+                        continue
                     for local_node_2 in range(2):
                         for local_xy_2 in range(self.n_dimensions):
                             local_dof_2 = self.n_dimensions * local_node_2 + local_xy_2
                             global_node_2 = int(self.elements.to_numpy()[element, local_node_2 + 1] - 1)
                             global_dof_2 = self.global_connector[global_node_2, local_xy_2]
-                            # if global_dof_2 > self.n_dof - 1:
-                           # forces_global[global_dof_1] = forces_global[global_dof_1] - self.k_element[
-                             #   local_dof_1, local_dof_2, element] * u[global_node_2, local_xy_2]
-                        # else:
-                            k_global[global_dof_1, global_dof_2] = k_global[global_dof_1, global_dof_2] + \
-                                                                   self.k_element[
-                                                                       local_dof_1, local_dof_2, element]
+                            if global_dof_2 > self.n_dof - 1:
+                                forces_global[global_dof_1] = forces_global[global_dof_1] - self.k_element[
+                                    local_dof_1, local_dof_2, element] * u[global_node_2, local_xy_2]
+                            else:
+                                k_global[global_dof_1, global_dof_2] = k_global[global_dof_1, global_dof_2] + \
+                                                                       self.k_element[
+                                                                           local_dof_1, local_dof_2, element]
 
-        return "done"
+        return k_global
+
+
+
