@@ -12,6 +12,8 @@ class TrussStructure:
         :param analysis_name: Name of analysis.
         :param directory: Directory where truss files are located.
         """
+        self.name = analysis_name
+        self.date_created = dt.datetime.now()
         self.n_displacements = None
         self.n_forces = None
         self.forces = None
@@ -20,15 +22,21 @@ class TrussStructure:
         self.nodes = None
         self.displacements = None
         self.n_nodes = None
-        self.name = analysis_name
-        self.date_created = dt.datetime.now()
         self.n_dimensions = None
         self.global_connector = None
         self.k_element = None
         self.n_dof = None
+        self.u = None
+        self.k_reduced = None
+        self.forces_reduced = None
+        self.u_reduced = None
         self.import_data(directory)
         self.create_global_connector_fast()
-        self.create_k_element_2d()
+        self.create_k_element_2d_multi()
+        self.create_k_reduced_2d()
+        self.solve()
+        self.u_remap()
+
 
     def __str__(self):
         return f"{self.name} analysis, created on {self.date_created}"
@@ -127,26 +135,25 @@ class TrussStructure:
             return k_elements_iter
 
         k_elements = np.empty((4, 4, 0))
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [executor.submit(process_row, row) for row in self.elements.itertuples()]
-            for future in concurrent.futures.as_completed(futures):
-                k_elements = np.append(k_elements, np.expand_dims(future.result(), axis=2), axis=2)
+
+        def make_array(row):
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                return executor.map(process_row, row)
+
+        results = make_array(self.elements.itertuples())
+        for result in results:
+            k_elements = np.append(k_elements, np.expand_dims(result, axis=2), axis=2)
 
         self.k_element = k_elements
 
-    def create_k_global_2d(self):
-        u = np.zeros((self.n_nodes, self.n_dimensions), dtype=float)
-        for i in range(0, self.n_dimensions):
-            u[self.displacements.loc[i, 'Node'] - 1, self.displacements.loc[i, 'DOF'] - 1] = self.displacements.loc[
-                i, 'Value']
-        forces_global = np.zeros((self.n_nodes * self.n_dimensions))
-        for i in range(self.n_forces):
-            node = self.forces['Node'][i]
-            dof = self.forces['DOF'][i]
-            g_dof = self.global_connector[node - 1, dof - 1]
-            forces_global[g_dof] = forces_global[g_dof] + self.forces['Value'][i]
+    def create_k_reduced_2d(self):
+        self.u = np.zeros((self.n_nodes, self.n_dimensions), dtype=float)
+        self.u[self.displacements.loc[:, 'Node'] - 1, self.displacements.loc[:, 'DOF'] - 1] = self.displacements.loc[
+                :, 'Value']
+        self.forces_reduced = np.zeros(self.n_dof)
+        self.forces_reduced[self.global_connector[self.forces['Node'] - 1, self.forces['DOF'] - 1]] += self.forces['Value']
 
-        k_global = np.zeros((self.n_nodes * self.n_dimensions, self.n_nodes * self.n_dimensions))
+        k_reduced = np.zeros((self.n_dof, self.n_dof))
         for element in range(self.n_elements):
             for local_node_1 in range(2):
                 for local_xy_1 in range(self.n_dimensions):
@@ -161,14 +168,23 @@ class TrussStructure:
                             global_node_2 = int(self.elements.to_numpy()[element, local_node_2 + 1] - 1)
                             global_dof_2 = self.global_connector[global_node_2, local_xy_2]
                             if global_dof_2 > self.n_dof - 1:
-                                forces_global[global_dof_1] = forces_global[global_dof_1] - self.k_element[
-                                    local_dof_1, local_dof_2, element] * u[global_node_2, local_xy_2]
+                                self.forces_reduced[global_dof_1] = self.forces_reduced[global_dof_1] - self.k_element[
+                                    local_dof_1, local_dof_2, element] * self.u[global_node_2, local_xy_2]
                             else:
-                                k_global[global_dof_1, global_dof_2] = k_global[global_dof_1, global_dof_2] + \
+                                k_reduced[global_dof_1, global_dof_2] = k_reduced[global_dof_1, global_dof_2] + \
                                                                        self.k_element[
                                                                            local_dof_1, local_dof_2, element]
 
-        return k_global
+        self.k_reduced = k_reduced
 
+    def solve(self):
+        self.u_reduced = np.linalg.solve(self.k_reduced, self.forces_reduced)
+
+    def u_remap(self):
+        for i in range(self.n_nodes):
+            for j in range(self.n_dimensions):
+                dof = self.global_connector[i, j]
+                if dof < self.n_dof:
+                    self.u[i, j] = self.u_reduced[dof]
 
 
