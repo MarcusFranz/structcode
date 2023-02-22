@@ -22,7 +22,13 @@ class TrussStructure:
             self.displacements, self.n_nodes, self.n_dimensions, self.global_connector, self.k_element, \
             self.n_dof, self.u, self.k_reduced, self.forces_reduced, self.u_reduced = (None,) * 16
         self.import_data()
+        self.Force_remap = np.zeros((self.n_nodes, 2))
+        self.Fext = np.zeros((self.n_nodes, 2))
         self.perform_calculations()
+        self.strain = np.empty(self.n_elements)
+        self.stress = np.empty(self.n_elements)
+        self.post_process()
+        # self.Fext = self.Fext[:, 0] - self.Fext[:, 1]
 
     def __str__(self):
         return f"{self.name} analysis, created on {self.date_created}"
@@ -202,6 +208,7 @@ class TrussStructure:
                 dof = self.global_connector[i, j]
                 if dof < self.n_dof:
                     self.u[i, j] = self.u_reduced[dof]
+                    self.Force_remap[i, j] = self.forces_reduced[dof]
 
     def perform_calculations(self):
         """
@@ -225,7 +232,7 @@ class TrussStructure:
             headers = ["Node \\#", "Displacement u", "Displacement v"]
             table = [headers]
             for i, row in enumerate(self.u):
-                table.append([f"{i + 1}", f"{row[0]:.4f}", f"{row[1]:.4f}"])
+                table.append([f"{i + 1}", f"{row[0]:.4E}", f"{row[1]:.4E}"])
             latex = '\\begin{table}\n\\centering\n\\caption{Nodal Displacements (units)}\n\\label{' \
                     'tab:node_disp}\n\\small\n'
             latex += '\\begin{tabular}{|c|c|c|}\n\\hline\n'
@@ -239,4 +246,22 @@ class TrussStructure:
         elif output.lower() == 'txt':
             pass
         else:
-            pass
+            print(self.u)
+
+    def post_process(self):
+        fbar = []
+        for i in range(self.n_elements):
+            # self.strain[i] =
+            node_1 = self.elements.to_numpy(dtype=int)[i, 1] - 1
+            node_2 = self.elements.to_numpy(dtype=int)[i, 2] - 1
+            L = (((self.k_element[0, 0, i] + self.k_element[3, 3, i]) / (self.elements.to_numpy()[i, 3] * self.elements.to_numpy()[i, 4])) ** (-1))
+            c = (self.k_element[0, 0, i] / (self.elements.to_numpy()[i, 3] * self.elements.to_numpy()[i, 4]) * L) / L
+            s = (self.k_element[3, 3, i] / (self.elements.to_numpy()[i, 3] * self.elements.to_numpy()[i, 4]) * L) / L
+            self.strain[i] = (self.u[node_2, 0] - self.u[node_1, 0]) * c + (self.u[node_2, 1] - self.u[node_1, 1]) * s
+            self.stress[i] = self.elements.to_numpy()[i, 3] * self.strain[i]
+            self.Fext[node_1, 0] -= self.stress[i] * self.elements.to_numpy()[i, 4] * c * L
+            self.Fext[node_1, 1] -= self.stress[i] * self.elements.to_numpy()[i, 4] * s * L
+            self.Fext[node_2, 0] += self.stress[i] * self.elements.to_numpy()[i, 4] * c * L
+            self.Fext[node_2, 1] += self.stress[i] * self.elements.to_numpy()[i, 4] * s * L
+            fbar.append(-self.stress[i] * self.elements.to_numpy()[i, 4] * c * L - self.stress[i] * self.elements.to_numpy()[i, 4] * s * L + self.stress[i] * self.elements.to_numpy()[i, 4] * c * L + self.stress[i] * self.elements.to_numpy()[i, 4] * s * L)
+        return fbar
